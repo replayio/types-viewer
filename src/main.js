@@ -30,11 +30,15 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-const { initSocket, sendMessage } = require("protocol/socket");
+const { initSocket, sendMessage, addEventListener } = require("protocol/socket");
 
 const url = new URL(window.location.href);
 
 const recordingId = url.searchParams.get("id");
+let gSessionId;
+
+addEventListener("Debugger.scriptParsed", onScript);
+addEventListener("Analysis.analysisResult", onAnalysisResult);
 
 setTimeout(initialize, 0);
 
@@ -48,9 +52,77 @@ async function initialize() {
 
   initSocket();
 
-  sendMessage("Recording.createSession", { recordingId }).then(
-    ({ sessionId }) => {
-      console.log(`Session ${sessionId}`);
+  const { sessionId } = await sendMessage("Recording.createSession", { recordingId });
+  console.log(`Session ${sessionId}`);
+  gSessionId = sessionId;
+
+  sendMessage("Debugger.findScripts", {}, sessionId);
+}
+
+function onScript({ scriptId, url }) {
+  console.log("OnScript", scriptId, url);
+  const elem = document.createElement("div");
+  elem.innerText = url;
+  document.body.appendChild(elem);
+  elem.addEventListener("click", async () => {
+    const { analysisId } = await sendMessage("Analysis.createAnalysis", {
+      mapper: typeMapper,
+      reducer: typeReducer,
+      effectful: false,
+    });
+
+    sendMessage("Analysis.addFunctionEntryPoints", {
+      analysisId,
+      sessionId: gSessionId,
+      scriptIds: [scriptId],
+    });
+
+    sendMessage("Analysis.runAnalysis", { analysisId });
+  });
+}
+
+// The mapper runs at function entry points and produces key/value pairs where
+// keys have the form { functionName, location, index, parameterName },
+// and values are the string type of that parameter.
+const typeMapper = `
+  const { point, time } = input;
+  const { frame: { frameId, functionName, location } } = sendMessage("Pause.getTopFrame");
+  const { parameters } = sendMessage("Pause.getFrameParameters", { frameId });
+
+  const entries = [];
+  parameters.forEach((param, index) => {
+    const key = { functionName, location, index, parameterName: param.name };
+    const value = valueType(param);
+    entries.push({ key, value });
+  }
+  return entries;
+
+  function valueType(v) {
+    if ("value" in v) {
+      if (v.value === null) {
+        return "null";
+      }
+      return typeof v.value;
     }
-  );
+    if ("unserializable" in v) {
+      // Unserializable values are either numbers or BigInts, which end with "n".
+      if (v.unserializable.endsWith("n")) {
+        return "bigint";
+      }
+      return "number";
+    }
+    if ("object" in v) {
+      return "object";
+    }
+    return "undefined";
+  }
+`;
+
+// The reducer removes duplicates from the parameter types encountered.
+const typeReducer = `
+  return [...new Set(values)];
+`;
+
+function onAnalysisResult({ analysisId, results }) {
+  console.log("AnalysisResult", analysisId, results);
 }
