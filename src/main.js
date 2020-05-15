@@ -74,7 +74,7 @@ function onScript({ scriptId, url }) {
     sendMessage("Analysis.addFunctionEntryPoints", {
       analysisId,
       sessionId: gSessionId,
-      scriptIds: [scriptId],
+      scriptId,
     });
 
     sendMessage("Analysis.runAnalysis", { analysisId });
