@@ -1,0 +1,10 @@
+
+.scriptLink {
+    font-size: large;
+    color: blue;
+    cursor: pointer;
+}
+
+.argumentType {
+    color: red;
+}

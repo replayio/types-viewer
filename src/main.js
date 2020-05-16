@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 const { initSocket, sendMessage, addEventListener } = require("protocol/socket");
+require("./styles.css");
 
 const url = new URL(window.location.href);
 
@@ -67,7 +68,11 @@ async function initialize() {
   elem.parentNode.removeChild(elem);
 }
 
+const gScriptURLs = new Map();
+
 function onScript({ scriptId, url }) {
+  gScriptURLs.set(scriptId, url);
+
   // Ignore scripts with no URL (eval scripts etc.)
   if (!url) {
     return;
@@ -75,12 +80,16 @@ function onScript({ scriptId, url }) {
 
   console.log("OnScript", scriptId, url);
   const elem = document.createElement("div");
-  elem.innerText = url;
   document.body.appendChild(elem);
+
+  const urlElem = document.createElement("div");
+  urlElem.className = "scriptLink";
+  urlElem.innerText = url;
+  elem.appendChild(urlElem);
 
   let resultsElem;
 
-  elem.addEventListener("click", async () => {
+  urlElem.addEventListener("click", async () => {
     if (resultsElem) {
       if (resultsElem.style.display == "none") {
         resultsElem.style.display = "";
@@ -128,15 +137,16 @@ function onScript({ scriptId, url }) {
 // and values are the string type of that parameter.
 const typeMapper = `
   const { point, time } = input;
-  const { frame } = sendCommand("Pause.getTopFrame");
-  const { frameId, functionName, functionLocation } = frame;
+  const { frames } = sendCommand("Pause.getAllFrames");
+  const { frameId, functionName, functionLocation } = frames[0];
+  const caller = frames.length >= 2 ? frames[1].location : undefined;
 
   const { argumentValues } = sendCommand("Pause.getFrameArguments", { frameId });
 
   const entries = [];
   argumentValues.forEach((v, index) => {
     const key = { functionName, location: functionLocation, index };
-    const value = valueType(v);
+    const value = { type: valueType(v), caller };
     entries.push({ key, value });
   });
   return entries;
@@ -164,7 +174,13 @@ const typeMapper = `
 
 // The reducer removes duplicates from the parameter types encountered.
 const typeReducer = `
-  return [...new Set(values)];
+  const rv = [];
+  for (const v of values) {
+    if (!rv.some(({ type }) => type == v.type)) {
+      rv.push(v);
+    }
+  }
+  return rv;
 `;
 
 const gAnalysisResults = new Map();
@@ -208,9 +224,21 @@ async function addAnalysisResults(resultsElem, sourcePromise, analysisId) {
       textElem = null;
 
       for (const { key: { functionName, index }, value } of entries) {
-        const elem = document.createElement("div");
-        resultsElem.appendChild(elem);
-        elem.innerText = `${functionName || ""} arg #${index}: ${JSON.stringify(value)}`;
+        const prefix = `${functionName || ""} arg #${index}`;
+        for (const { type, caller } of value) {
+          const elem = document.createElement("div");
+          elem.className = "argumentType";
+          resultsElem.appendChild(elem);
+          let location;
+          if (caller) {
+            const { scriptId, line, column } = caller;
+            const url = gScriptURLs.get(scriptId);
+            location = `${url}:${line}:${column}`;
+          } else {
+            location = "<none>";
+          }
+          elem.innerText = `${prefix}: type ${type} caller ${location}`;
+        }
       }
     }
   });

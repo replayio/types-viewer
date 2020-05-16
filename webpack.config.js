@@ -19,10 +19,12 @@ module.exports = {
               importLoaders: 1,
               url: false,
             },
-          },
-          "postcss-loader",
+          }
         ],
       },
     ],
+  },
+  output: {
+    filename: "typesMain.js"
   },
 };
