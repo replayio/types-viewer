@@ -52,19 +52,56 @@ async function initialize() {
 
   initSocket();
 
+  const elem = document.createElement("div");
+  document.body.appendChild(elem);
+  elem.innerText = "Initializing...";
+
   const { sessionId } = await sendMessage("Recording.createSession", { recordingId });
   console.log(`Session ${sessionId}`);
   gSessionId = sessionId;
 
-  sendMessage("Debugger.findScripts", {}, sessionId);
+  elem.innerText = "Loading scripts...";
+
+  await sendMessage("Debugger.findScripts", {}, sessionId);
+
+  elem.parentNode.removeChild(elem);
 }
 
 function onScript({ scriptId, url }) {
+  // Ignore scripts with no URL (eval scripts etc.)
+  if (!url) {
+    return;
+  }
+
   console.log("OnScript", scriptId, url);
   const elem = document.createElement("div");
   elem.innerText = url;
   document.body.appendChild(elem);
+
+  let resultsElem;
+
   elem.addEventListener("click", async () => {
+    if (resultsElem) {
+      if (resultsElem.style.display == "none") {
+        resultsElem.style.display = "";
+      } else {
+        resultsElem.style.display = "none";
+      }
+      return;
+    }
+
+    resultsElem = document.createElement("div");
+    elem.appendChild(resultsElem);
+
+    resultsElem.innerText = "Analyzing...";
+    console.log("AnalysisStart", url);
+
+    const sourcePromise = sendMessage(
+      "Debugger.getScriptSource",
+      { scriptId },
+      gSessionId
+    );
+
     const { analysisId } = await sendMessage("Analysis.createAnalysis", {
       mapper: typeMapper,
       reducer: typeReducer,
@@ -77,7 +114,12 @@ function onScript({ scriptId, url }) {
       scriptId,
     });
 
-    sendMessage("Analysis.runAnalysis", { analysisId });
+    await sendMessage("Analysis.runAnalysis", { analysisId });
+
+    resultsElem.innerText = "";
+    addAnalysisResults(resultsElem, sourcePromise, analysisId);
+
+    console.log("AnalysisFinished", url);
   });
 }
 
@@ -86,15 +128,17 @@ function onScript({ scriptId, url }) {
 // and values are the string type of that parameter.
 const typeMapper = `
   const { point, time } = input;
-  const { frame: { frameId, functionName, location } } = sendMessage("Pause.getTopFrame");
-  const { parameters } = sendMessage("Pause.getFrameParameters", { frameId });
+  const { frame } = sendCommand("Pause.getTopFrame");
+  const { frameId, functionName, functionLocation } = frame;
+
+  const { argumentValues } = sendCommand("Pause.getFrameArguments", { frameId });
 
   const entries = [];
-  parameters.forEach((param, index) => {
-    const key = { functionName, location, index, parameterName: param.name };
-    const value = valueType(param);
+  argumentValues.forEach((v, index) => {
+    const key = { functionName, location: functionLocation, index };
+    const value = valueType(v);
     entries.push({ key, value });
-  }
+  });
   return entries;
 
   function valueType(v) {
@@ -123,6 +167,51 @@ const typeReducer = `
   return [...new Set(values)];
 `;
 
+const gAnalysisResults = new Map();
+
 function onAnalysisResult({ analysisId, results }) {
   console.log("AnalysisResult", analysisId, results);
+
+  if (!gAnalysisResults.has(analysisId)) {
+    gAnalysisResults.set(analysisId, []);
+  }
+  gAnalysisResults.get(analysisId).push(...results);
+}
+
+async function addAnalysisResults(resultsElem, sourcePromise, analysisId) {
+  const { scriptSource } = await sourcePromise;
+  const results = gAnalysisResults.get(analysisId);
+  const resultsByLine = new Map();
+
+  for (const entry of results) {
+    const { line } = entry.key.location;
+    if (resultsByLine.has(line)) {
+      resultsByLine.get(line).push(entry);
+    } else {
+      resultsByLine.set(line, [entry]);
+    }
+  }
+
+  let textElem;
+
+  const lines = scriptSource.split("\n");
+  lines.forEach((line, index) => {
+    const lineno = index + 1;
+    if (!textElem) {
+      textElem = document.createElement("pre");
+      resultsElem.appendChild(textElem);
+    }
+    textElem.innerText += `${lineno.toString().padEnd(5)}${line}\n`;
+
+    const entries = resultsByLine.get(lineno);
+    if (entries) {
+      textElem = null;
+
+      for (const { key: { functionName, index }, value } of entries) {
+        const elem = document.createElement("div");
+        resultsElem.appendChild(elem);
+        elem.innerText = `${functionName || ""} arg #${index}: ${JSON.stringify(value)}`;
+      }
+    }
+  });
 }
