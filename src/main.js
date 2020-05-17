@@ -133,8 +133,8 @@ function onScript({ scriptId, url }) {
 }
 
 // The mapper runs at function entry points and produces key/value pairs where
-// keys have the form { functionName, location, index, parameterName },
-// and values are the string type of that parameter.
+// keys describe a function/parameter and values describe the possible types of
+// that parameter.
 const typeMapper = `
   const { point, time } = input;
   const { frames } = sendCommand("Pause.getAllFrames");
