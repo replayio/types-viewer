@@ -158,12 +158,11 @@ const typeMapper = `
       }
       return typeof v.value;
     }
-    if ("unserializable" in v) {
-      // Unserializable values are either numbers or BigInts, which end with "n".
-      if (v.unserializable.endsWith("n")) {
-        return "bigint";
-      }
+    if ("unserializableNumber" in v) {
       return "number";
+    }
+    if ("bigint" in v) {
+      return "bigint";
     }
     if ("object" in v) {
       return "object";
